@@ -202,9 +202,9 @@ st.markdown(
 )
 
 # ── tabs ─────────────────────────────────────────────────────────────────────
-t1, t2, t3, t4, t5, t6, t7 = st.tabs([
+t1, t2, t3, t4, t5, t6 = st.tabs([
     "Full History", "Current Cycle", "Analogues",
-    "Heatmap", "Event Catalogue", "Seasonal Distribution",
+    "Heatmap", "Seasonal Distribution",
     "West Africa — ENSO Correlation"
 ])
 
@@ -417,67 +417,9 @@ with t4:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# TAB 5  Event Catalogue
+# TAB 5  Seasonal Distribution
 # ════════════════════════════════════════════════════════════════════════════
 with t5:
-    events = classify_events(df, threshold=0.5, min_dur=5)
-
-    if events.empty:
-        st.info("No events classified.")
-    else:
-        en_evs = events[events["Type"] == "El Nino"].sort_values("Peak Anomaly", ascending=False).reset_index(drop=True)
-        ln_evs = events[events["Type"] == "La Nina"].sort_values("Peak Anomaly").reset_index(drop=True)
-
-        col1, col2 = st.columns(2)
-        st.markdown("---")
-        st.markdown("**Peak Anomaly by Event**")
-
-        # Sort all events by the peak season date for a timeline bar
-        events_sorted = events.copy()
-        # Map peak season label to approximate date
-        events_sorted["peak_seas"]  = events_sorted["Peak Season"].str[:3]
-        events_sorted["peak_yr"]    = events_sorted["Peak Season"].str[-4:].astype(int)
-        events_sorted["peak_month"] = events_sorted["peak_seas"].map(SEAS_MONTH)
-        events_sorted["peak_date"]  = pd.to_datetime({
-            "year": events_sorted["peak_yr"],
-            "month": events_sorted["peak_month"],
-            "day": 1
-        })
-        events_sorted = events_sorted.sort_values("peak_date")
-
-        fig5 = go.Figure(go.Bar(
-            x=events_sorted["Peak Season"],
-            y=events_sorted["Peak Anomaly"],
-            marker_color=[EN_COL if t == "El Nino" else LN_COL
-                          for t in events_sorted["Type"]],
-            customdata=events_sorted[["Type", "Duration", "Start", "End"]],
-            hovertemplate=(
-                "<b>%{x}</b><br>"
-                "Type: %{customdata[0]}<br>"
-                "Peak: %{y:+.2f} °C<br>"
-                "Duration: %{customdata[1]} seasons<br>"
-                "%{customdata[2]} → %{customdata[3]}<extra></extra>"
-            )
-        ))
-        fig5.add_hline(y=0, line=dict(color="#718096", width=0.8))
-        fig5.add_hline(y=0.5,  line=dict(color=EN_COL, width=0.6, dash="dash"))
-        fig5.add_hline(y=-0.5, line=dict(color=LN_COL, width=0.6, dash="dash"))
-        fig5.update_layout(
-            template="plotly_white", height=360,
-            margin=dict(t=10, b=80, l=55, r=20),
-            yaxis=dict(title="Peak Anomaly (°C)", gridcolor="#ebebeb", zeroline=False),
-            xaxis=dict(title="", tickangle=-45, gridcolor="#ebebeb"),
-            paper_bgcolor="white", plot_bgcolor="white",
-            font=dict(family="Inter, sans-serif", color="#4a5568"),
-            showlegend=False
-        )
-        st.plotly_chart(fig5, use_container_width=True)
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# TAB 6  Seasonal Distribution
-# ════════════════════════════════════════════════════════════════════════════
-with t6:
     st.markdown("**Seasonal Distribution of Nino 3.4 Anomaly — 1950 to Present**")
     st.caption("Box = IQR  |  Whiskers = 1.5× IQR  |  Mean = dashed line  |  Star = current reading")
 
@@ -523,9 +465,9 @@ with t6:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# TAB 7  West Africa — ENSO Correlation
+# TAB 6  West Africa — ENSO Correlation
 # ════════════════════════════════════════════════════════════════════════════
-with t7:
+with t6:
     if not os.path.exists(ERA5_WA_PQ):
         st.warning("era5_wa_monthly.parquet not found. Run Database/ingest_era5_wa.py first.")
         st.stop()
@@ -537,18 +479,6 @@ with t7:
 
     st.markdown("**West Africa Cocoa Belt — ENSO Impact on Rainfall & Temperature**")
     st.caption("ERA5 Reanalysis  |  Ivory Coast / Ghana region (4–10°N, 8°W–2°E)  |  1950–present  |  Climatology baseline: 1981–2010")
-
-    # ── KPI row
-    for phase_name, col in PHASE_COLS.items():
-        pass
-    ph_stats = mrg.groupby("phase")[["precip_mm", "temp_c"]].mean().round(1)
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("El Nino avg precip",  f"{ph_stats.loc['El Nino','precip_mm']:.0f} mm/mo"  if 'El Nino'  in ph_stats.index else "—")
-    k2.metric("La Nina avg precip",  f"{ph_stats.loc['La Nina','precip_mm']:.0f} mm/mo"  if 'La Nina'  in ph_stats.index else "—")
-    k3.metric("El Nino avg temp",    f"{ph_stats.loc['El Nino','temp_c']:.1f} °C"         if 'El Nino'  in ph_stats.index else "—")
-    k4.metric("La Nina avg temp",    f"{ph_stats.loc['La Nina','temp_c']:.1f} °C"         if 'La Nina'  in ph_stats.index else "—")
-
-    st.markdown("---")
 
     # ── Section 1: Monthly precip by ENSO phase (composite bar)
     st.markdown("**Rainfall by Month — ENSO Phase Composite**")
@@ -573,12 +503,60 @@ with t7:
         paper_bgcolor="white", plot_bgcolor="white",
         font=dict(family="Inter, sans-serif", color="#4a5568")
     )
-    st.plotly_chart(fig7a, use_container_width=True)
+    # Year labels for each phase
+    en_years = sorted(mrg[mrg["phase"] == "El Nino"]["year"].unique())
+    ln_years = sorted(mrg[mrg["phase"] == "La Nina"]["year"].unique())
+    en_str   = "  ".join(str(y) for y in en_years)
+    ln_str   = "  ".join(str(y) for y in ln_years)
 
-    # ── Section 2: Lagged correlation — Nino 3.4 vs WA precip
+    st.plotly_chart(fig7a, use_container_width=True)
+    st.markdown(
+        f'<div style="font-size:10px;line-height:1.7;margin-top:-8px">'
+        f'<span style="color:{EN_COL};font-weight:600">El Nino years:</span> '
+        f'<span style="color:#4a5568">{en_str}</span><br>'
+        f'<span style="color:{LN_COL};font-weight:600">La Nina years:</span> '
+        f'<span style="color:#4a5568">{ln_str}</span></div>',
+        unsafe_allow_html=True
+    )
+
+    # ── Temperature by Month — ENSO Phase Composite
     st.markdown("---")
-    st.markdown("**Lagged Correlation — Nino 3.4 Anomaly vs West Africa Rainfall**")
-    st.caption("Correlation at each lag (months). Positive lag = ENSO leads rainfall. Peak tells you how many months ahead ENSO predicts conditions.")
+    st.markdown("**Temperature by Month — ENSO Phase Composite**")
+    st.caption("Average 2m temperature (°C) grouped by ENSO phase.")
+
+    fig7a2 = go.Figure()
+    for phase_name, col in PHASE_COLS.items():
+        sub = mrg[mrg["phase"] == phase_name].groupby("month")["temp_c"].mean()
+        fig7a2.add_trace(go.Bar(
+            x=MONTH_ORDER,
+            y=[sub.get(m+1, np.nan) for m in range(12)],
+            name=phase_name,
+            marker_color=col,
+            hovertemplate=f"<b>{phase_name}</b><br>%{{x}}: %{{y:.2f}} °C<extra></extra>"
+        ))
+    fig7a2.update_layout(
+        template="plotly_white", height=360, barmode="group",
+        margin=dict(t=10, b=50, l=55, r=20),
+        yaxis=dict(title="Temp (°C)", gridcolor="#ebebeb", zeroline=False),
+        xaxis=dict(title="", gridcolor="#ebebeb"),
+        legend=dict(font=dict(size=11), orientation="h", y=1.05, x=0),
+        paper_bgcolor="white", plot_bgcolor="white",
+        font=dict(family="Inter, sans-serif", color="#4a5568")
+    )
+    st.plotly_chart(fig7a2, use_container_width=True)
+    st.markdown(
+        f'<div style="font-size:10px;line-height:1.7;margin-top:-8px">'
+        f'<span style="color:{EN_COL};font-weight:600">El Nino years:</span> '
+        f'<span style="color:#4a5568">{en_str}</span><br>'
+        f'<span style="color:{LN_COL};font-weight:600">La Nina years:</span> '
+        f'<span style="color:#4a5568">{ln_str}</span></div>',
+        unsafe_allow_html=True
+    )
+
+    # ── Section 2: Lagged correlation — Nino 3.4 vs WA precip + temp
+    st.markdown("---")
+    st.markdown("**Lagged Correlation — Nino 3.4 vs West Africa Rainfall & Temperature**")
+    st.caption("Positive lag = ENSO leads. Peak lag = how many months ahead Nino 3.4 predicts conditions.")
 
     max_lag = 12
     lags    = range(-max_lag, max_lag + 1)
@@ -593,20 +571,20 @@ with t7:
         x=list(lags), y=corr_p, mode="lines+markers",
         line=dict(color=LN_COL, width=2),
         marker=dict(size=5),
-        name="vs Precipitation anomaly",
+        name="Rainfall anomaly",
         hovertemplate="Lag %{x}m<br>r = %{y:.3f}<extra></extra>"
     ))
     fig7b.add_trace(go.Scatter(
         x=list(lags), y=corr_t, mode="lines+markers",
         line=dict(color=EN_COL, width=2, dash="dash"),
         marker=dict(size=5),
-        name="vs Temperature anomaly",
+        name="Temperature anomaly",
         hovertemplate="Lag %{x}m<br>r = %{y:.3f}<extra></extra>"
     ))
-    fig7b.add_hline(y=0,     line=dict(color="#718096", width=0.8))
-    fig7b.add_hline(y=0.2,   line=dict(color="#718096", width=0.6, dash="dot"))
-    fig7b.add_hline(y=-0.2,  line=dict(color="#718096", width=0.6, dash="dot"))
-    fig7b.add_vline(x=0,     line=dict(color="#4a5568", width=0.8, dash="dash"))
+    fig7b.add_hline(y=0,    line=dict(color="#718096", width=0.8))
+    fig7b.add_hline(y=0.2,  line=dict(color="#718096", width=0.6, dash="dot"))
+    fig7b.add_hline(y=-0.2, line=dict(color="#718096", width=0.6, dash="dot"))
+    fig7b.add_vline(x=0,    line=dict(color="#4a5568", width=0.8, dash="dash"))
     fig7b.update_layout(
         template="plotly_white", height=360,
         margin=dict(t=10, b=50, l=55, r=20),
@@ -670,37 +648,4 @@ with t7:
     )
     st.plotly_chart(fig7c, use_container_width=True)
 
-    # ── Section 4: Dual time series overlay
-    st.markdown("---")
-    st.markdown("**Time Series Overlay — Nino 3.4 vs West Africa Rainfall Anomaly**")
-    st.caption("12-month rolling mean shown for clarity. Inverted relationship visible during strong ENSO events.")
-
-    roll = mrg[["ANOM", "precip_anom"]].rolling(12, center=True).mean().dropna()
-
-    fig7d = go.Figure()
-    fig7d.add_trace(go.Scatter(
-        x=roll.index, y=roll["ANOM"],
-        mode="lines", name="Nino 3.4 (12m roll)",
-        line=dict(color="#2c3e50", width=1.5),
-        hovertemplate="%{x|%b %Y}<br>Nino 3.4: %{y:+.2f} °C<extra></extra>"
-    ))
-    fig7d.add_trace(go.Scatter(
-        x=roll.index, y=roll["precip_anom"] / 30,   # scale to same axis
-        mode="lines", name="WA Precip anom (÷30, 12m roll)",
-        line=dict(color=LN_COL, width=1.5, dash="dash"),
-        hovertemplate="%{x|%b %Y}<br>Precip anom (scaled): %{y:+.2f}<extra></extra>"
-    ))
-    fig7d.add_hline(y=0, line=dict(color="#718096", width=0.7))
-    fig7d.update_layout(
-        template="plotly_white", height=360,
-        margin=dict(t=10, b=50, l=55, r=20),
-        yaxis=dict(title="Nino 3.4 °C  /  Precip anom ÷30", gridcolor="#ebebeb", zeroline=False),
-        xaxis=dict(title="", gridcolor="#ebebeb"),
-        legend=dict(font=dict(size=11), bgcolor="rgba(255,255,255,0.9)",
-                    bordercolor="#e2e8f0", borderwidth=1),
-        hovermode="x unified",
-        paper_bgcolor="white", plot_bgcolor="white",
-        font=dict(family="Inter, sans-serif", color="#4a5568")
-    )
-    st.plotly_chart(fig7d, use_container_width=True)
 
