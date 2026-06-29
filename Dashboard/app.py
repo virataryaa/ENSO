@@ -141,7 +141,8 @@ def load_era5_wa():
     wa.index = pd.to_datetime(wa.index)
     wa = wa.sort_index()
     # Monthly anomaly vs 1981-2010 climatology
-    clim = wa[(wa.index.year >= 1981) & (wa.index.year <= 2010)].groupby(wa.index.month).mean()
+    base = wa[(wa.index.year >= 1981) & (wa.index.year <= 2010)].copy()
+    clim = base.groupby(base.index.month).mean()
     wa["precip_anom"] = wa["precip_mm"] - wa.index.map(lambda d: clim.loc[d.month, "precip_mm"])
     wa["temp_anom"]   = wa["temp_c"]    - wa.index.map(lambda d: clim.loc[d.month, "temp_c"])
     return wa
