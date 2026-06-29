@@ -14,6 +14,7 @@ NU_COL  = "#95a5a6"
 
 SEASON_ORDER = ["DJF","JFM","FMA","MAM","AMJ","MJJ","JJA","JAS","ASO","SON","OND","NDJ"]
 SEAS_MONTH   = {s: i+1 for i, s in enumerate(SEASON_ORDER)}
+MONTH_ORDER  = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
 st.set_page_config(page_title="Nino 3.4 — ENSO Monitor", layout="wide")
 st.markdown("""
@@ -561,9 +562,7 @@ with t7:
     wa  = load_era5_wa()
     mrg = merge_enso_wa(df, wa)
 
-    MONTH_ORDER = ["Jan","Feb","Mar","Apr","May","Jun",
-                   "Jul","Aug","Sep","Oct","Nov","Dec"]
-    PHASE_COLS  = {"El Nino": EN_COL, "Neutral": NU_COL, "La Nina": LN_COL}
+    PHASE_COLS = {"El Nino": EN_COL, "Neutral": NU_COL, "La Nina": LN_COL}
 
     st.markdown("**West Africa Cocoa Belt — ENSO Impact on Rainfall & Temperature**")
     st.caption("ERA5 Reanalysis  |  Ivory Coast / Ghana region (4–10°N, 8°W–2°E)  |  1950–present  |  Climatology baseline: 1981–2010")
