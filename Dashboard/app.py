@@ -139,27 +139,33 @@ def classify_events(df, threshold=0.5, min_dur=5):
 @st.cache_data
 def load_era5_wa():
     wa = pd.read_parquet(ERA5_WA_PQ)
-    wa.index = pd.to_datetime(wa.index).tz_localize(None)   # strip tz if present
+    idx = pd.to_datetime(wa.index)
+    if hasattr(idx, "tz") and idx.tz is not None:
+        idx = idx.tz_convert(None)
+    wa.index = idx
     wa = wa.sort_index()
-    base = wa[(wa.index.year >= 1981) & (wa.index.year <= 2010)].copy()
-    clim = base.groupby(base.index.month).mean()
-    wa["precip_anom"] = wa["precip_mm"] - wa.index.map(lambda d: clim.loc[d.month, "precip_mm"])
-    wa["temp_anom"]   = wa["temp_c"]    - wa.index.map(lambda d: clim.loc[d.month, "temp_c"])
-    wa["year"]        = wa.index.year
-    wa["month"]       = wa.index.month
+    wa["year"]  = wa.index.year
+    wa["month"] = wa.index.month
     return wa
 
 
 def merge_enso_wa(enso_df, wa_df):
-    """Merge ENSO + ERA5 WA on year/month — avoids tz mismatch issues."""
+    """Merge ENSO + ERA5 WA on year/month, compute anomalies post-merge."""
     enso_m = enso_df[["DATE", "ANOM"]].copy()
     enso_m["year"]  = enso_m["DATE"].dt.year
     enso_m["month"] = enso_m["DATE"].dt.month
 
-    wa_copy = wa_df[["precip_mm", "temp_c", "precip_anom", "temp_anom", "year", "month"]].copy()
+    wa_copy = wa_df[["precip_mm", "temp_c", "year", "month"]].copy()
 
     merged = enso_m.merge(wa_copy, on=["year", "month"], how="inner")
     merged = merged.set_index("DATE").sort_index()
+
+    # Compute anomalies vs 1981-2010 climatology on the merged series
+    base  = merged[(merged["year"] >= 1981) & (merged["year"] <= 2010)]
+    clim  = base.groupby("month")[["precip_mm", "temp_c"]].mean()
+    merged["precip_anom"] = merged["precip_mm"] - merged["month"].map(clim["precip_mm"])
+    merged["temp_anom"]   = merged["temp_c"]    - merged["month"].map(clim["temp_c"])
+
     merged["month_name"] = merged["month"].apply(lambda m: MONTH_ORDER[m - 1])
     merged["phase"]      = merged["ANOM"].apply(
         lambda a: "El Nino" if a >= 0.5 else ("La Nina" if a <= -0.5 else "Neutral")
@@ -271,14 +277,6 @@ with t2:
     base_layout(fig2, height=400, rmargin=100)
     st.plotly_chart(fig2, use_container_width=True)
 
-    # 12-month change table
-    recent12 = df.tail(13).copy()
-    delta = recent12["ANOM"].diff().dropna()
-    tbl = recent12.tail(12).copy()
-    tbl["Change"] = delta.values
-    tbl = tbl[["LABEL","ANOM","Change"]].rename(columns={"LABEL":"Season","ANOM":"Anomaly (°C)","Change":"Change (°C)"})
-    tbl = tbl.sort_values("Season", ascending=False).reset_index(drop=True)
-    st.dataframe(tbl, use_container_width=True, hide_index=True)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -431,13 +429,6 @@ with t5:
         ln_evs = events[events["Type"] == "La Nina"].sort_values("Peak Anomaly").reset_index(drop=True)
 
         col1, col2 = st.columns(2)
-        with col1:
-            st.markdown(f"**El Nino Events**  ({len(en_evs)})")
-            st.dataframe(en_evs, use_container_width=True, hide_index=True)
-        with col2:
-            st.markdown(f"**La Nina Events**  ({len(ln_evs)})")
-            st.dataframe(ln_evs, use_container_width=True, hide_index=True)
-
         st.markdown("---")
         st.markdown("**Peak Anomaly by Event**")
 
@@ -529,26 +520,6 @@ with t6:
     )
     st.plotly_chart(fig6, use_container_width=True)
 
-    # Summary stats table
-    st.markdown("---")
-    st.markdown("**Summary Statistics by Season**")
-    stats_rows = []
-    for seas in SEASON_ORDER:
-        vals = df[df["SEAS"] == seas]["ANOM"].dropna()
-        n_en = (vals >= 0.5).sum()
-        n_ln = (vals <= -0.5).sum()
-        n_ne = len(vals) - n_en - n_ln
-        stats_rows.append({
-            "Season": seas,
-            "Mean (°C)": round(vals.mean(), 2),
-            "Std (°C)":  round(vals.std(), 2),
-            "Min (°C)":  round(vals.min(), 2),
-            "Max (°C)":  round(vals.max(), 2),
-            "El Nino (n)": int(n_en),
-            "Neutral (n)": int(n_ne),
-            "La Nina (n)": int(n_ln),
-        })
-    st.dataframe(pd.DataFrame(stats_rows), use_container_width=True, hide_index=True)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -733,15 +704,3 @@ with t7:
     )
     st.plotly_chart(fig7d, use_container_width=True)
 
-    # ── Section 5: Phase summary table
-    st.markdown("---")
-    st.markdown("**ENSO Phase Summary — West Africa Climate Statistics**")
-    summary = mrg.groupby(["phase", "month_name"]).agg(
-        avg_precip=("precip_mm", "mean"),
-        avg_precip_anom=("precip_anom", "mean"),
-        avg_temp=("temp_c", "mean"),
-        avg_temp_anom=("temp_anom", "mean"),
-        n=("ANOM", "count")
-    ).round(2).reset_index()
-    summary.columns = ["Phase", "Month", "Avg Precip (mm)", "Precip Anom (mm)", "Avg Temp (°C)", "Temp Anom (°C)", "N years"]
-    st.dataframe(summary, use_container_width=True, hide_index=True)
