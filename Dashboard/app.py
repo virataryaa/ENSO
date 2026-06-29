@@ -571,15 +571,20 @@ with t6:
     # ── Section 2: Lagged correlation — Nino 3.4 vs WA precip + temp
     st.markdown("---")
     st.markdown("**Lagged Correlation — Nino 3.4 vs West Africa Rainfall & Temperature**")
-    st.caption("Positive lag = ENSO leads. Peak lag = how many months ahead Nino 3.4 predicts conditions.")
+    st.caption("Both series smoothed to 3-month rolling means before correlating, matching the ENSO averaging window. Positive lag = ENSO leads.")
+
+    # 3-month rolling smooth on ERA5 to match ENSO averaging window
+    mrg_s = mrg.copy()
+    mrg_s["precip_anom_3m"] = mrg_s["precip_anom"].rolling(3, center=True, min_periods=2).mean()
+    mrg_s["temp_anom_3m"]   = mrg_s["temp_anom"].rolling(3, center=True, min_periods=2).mean()
 
     max_lag = 12
     lags    = range(-max_lag, max_lag + 1)
     corr_p, corr_t = [], []
     for lag in lags:
-        shifted = mrg["ANOM"].shift(lag)
-        corr_p.append(shifted.corr(mrg["precip_anom"]))
-        corr_t.append(shifted.corr(mrg["temp_anom"]))
+        shifted = mrg_s["ANOM"].shift(lag)
+        corr_p.append(shifted.corr(mrg_s["precip_anom_3m"]))
+        corr_t.append(shifted.corr(mrg_s["temp_anom_3m"]))
 
     fig7b = go.Figure()
     fig7b.add_trace(go.Scatter(
@@ -612,55 +617,95 @@ with t6:
     )
     st.plotly_chart(fig7b, use_container_width=True)
 
-    # ── Section 3: Scatter — Nino 3.4 vs WA precip anomaly by season
+    # ── Section 3: Scatter — Nino 3.4 vs WA anomalies by month
     st.markdown("---")
-    st.markdown("**Scatter — Nino 3.4 vs Rainfall Anomaly by Month**")
-    st.caption("Each dot = one month. Coloured by ENSO phase. Slope shows direction of relationship.")
-
     sel_month = st.selectbox(
         "Filter by calendar month (or All)",
         options=["All"] + MONTH_ORDER,
-        index=0
+        index=0,
+        key="scatter_month"
     )
     scatter_df = mrg.copy()
     if sel_month != "All":
         m_num = MONTH_ORDER.index(sel_month) + 1
         scatter_df = scatter_df[scatter_df["month"] == m_num]
 
-    fig7c = go.Figure()
-    for phase_name, col in PHASE_COLS.items():
-        sub = scatter_df[scatter_df["phase"] == phase_name]
-        fig7c.add_trace(go.Scatter(
-            x=sub["ANOM"], y=sub["precip_anom"],
-            mode="markers",
-            name=phase_name,
-            marker=dict(color=col, size=5, opacity=0.65,
-                        line=dict(color="white", width=0.4)),
-            customdata=sub.index.strftime("%b %Y"),
-            hovertemplate="%{customdata}<br>Nino 3.4: %{x:+.2f} °C<br>Precip anom: %{y:+.1f} mm<extra></extra>"
-        ))
-    # Trendline
-    valid = scatter_df[["ANOM", "precip_anom"]].dropna()
-    if len(valid) > 10:
-        m_coef, b_coef = np.polyfit(valid["ANOM"], valid["precip_anom"], 1)
-        x_range = np.linspace(valid["ANOM"].min(), valid["ANOM"].max(), 100)
-        fig7c.add_trace(go.Scatter(
-            x=x_range, y=m_coef * x_range + b_coef,
-            mode="lines", line=dict(color="#4a5568", width=1.5, dash="dot"),
-            name=f"Trend  (slope={m_coef:.1f} mm/°C)", showlegend=True
-        ))
-    fig7c.add_hline(y=0, line=dict(color="#718096", width=0.7))
-    fig7c.add_vline(x=0, line=dict(color="#718096", width=0.7))
-    fig7c.update_layout(
-        template="plotly_white", height=400,
-        margin=dict(t=10, b=50, l=60, r=20),
-        yaxis=dict(title="Rainfall anomaly (mm vs 1981–2010 clim)", gridcolor="#ebebeb", zeroline=False),
-        xaxis=dict(title="Nino 3.4 anomaly (°C)", gridcolor="#ebebeb"),
-        legend=dict(font=dict(size=11), bgcolor="rgba(255,255,255,0.9)",
-                    bordercolor="#e2e8f0", borderwidth=1),
-        paper_bgcolor="white", plot_bgcolor="white",
-        font=dict(family="Inter, sans-serif", color="#4a5568")
-    )
-    st.plotly_chart(fig7c, use_container_width=True)
+    col_p, col_t = st.columns(2)
+
+    # Rainfall scatter
+    with col_p:
+        st.markdown("**Nino 3.4 vs Rainfall Anomaly**")
+        st.caption("Each dot = one month. Slope shows direction of relationship.")
+        fig7c = go.Figure()
+        for phase_name, col in PHASE_COLS.items():
+            sub = scatter_df[scatter_df["phase"] == phase_name]
+            fig7c.add_trace(go.Scatter(
+                x=sub["ANOM"], y=sub["precip_anom"],
+                mode="markers", name=phase_name,
+                marker=dict(color=col, size=5, opacity=0.65,
+                            line=dict(color="white", width=0.4)),
+                customdata=sub.index.strftime("%b %Y"),
+                hovertemplate="%{customdata}<br>Nino 3.4: %{x:+.2f}°C<br>Precip anom: %{y:+.1f} mm<extra></extra>"
+            ))
+        valid_p = scatter_df[["ANOM", "precip_anom"]].dropna()
+        if len(valid_p) > 10:
+            m_c, b_c = np.polyfit(valid_p["ANOM"], valid_p["precip_anom"], 1)
+            x_r = np.linspace(valid_p["ANOM"].min(), valid_p["ANOM"].max(), 100)
+            fig7c.add_trace(go.Scatter(
+                x=x_r, y=m_c * x_r + b_c, mode="lines",
+                line=dict(color="#4a5568", width=1.5, dash="dot"),
+                name=f"Trend ({m_c:+.1f} mm/°C)"
+            ))
+        fig7c.add_hline(y=0, line=dict(color="#718096", width=0.7))
+        fig7c.add_vline(x=0, line=dict(color="#718096", width=0.7))
+        fig7c.update_layout(
+            template="plotly_white", height=400,
+            margin=dict(t=10, b=50, l=60, r=20),
+            yaxis=dict(title="Rainfall anomaly (mm)", gridcolor="#ebebeb", zeroline=False),
+            xaxis=dict(title="Nino 3.4 anomaly (°C)", gridcolor="#ebebeb"),
+            legend=dict(font=dict(size=10), bgcolor="rgba(255,255,255,0.9)",
+                        bordercolor="#e2e8f0", borderwidth=1),
+            paper_bgcolor="white", plot_bgcolor="white",
+            font=dict(family="Inter, sans-serif", color="#4a5568")
+        )
+        st.plotly_chart(fig7c, use_container_width=True)
+
+    # Temperature scatter
+    with col_t:
+        st.markdown("**Nino 3.4 vs Temperature Anomaly**")
+        st.caption("Each dot = one month. Slope shows direction of relationship.")
+        fig7d = go.Figure()
+        for phase_name, col in PHASE_COLS.items():
+            sub = scatter_df[scatter_df["phase"] == phase_name]
+            fig7d.add_trace(go.Scatter(
+                x=sub["ANOM"], y=sub["temp_anom"],
+                mode="markers", name=phase_name,
+                marker=dict(color=col, size=5, opacity=0.65,
+                            line=dict(color="white", width=0.4)),
+                customdata=sub.index.strftime("%b %Y"),
+                hovertemplate="%{customdata}<br>Nino 3.4: %{x:+.2f}°C<br>Temp anom: %{y:+.2f}°C<extra></extra>"
+            ))
+        valid_t = scatter_df[["ANOM", "temp_anom"]].dropna()
+        if len(valid_t) > 10:
+            m_c, b_c = np.polyfit(valid_t["ANOM"], valid_t["temp_anom"], 1)
+            x_r = np.linspace(valid_t["ANOM"].min(), valid_t["ANOM"].max(), 100)
+            fig7d.add_trace(go.Scatter(
+                x=x_r, y=m_c * x_r + b_c, mode="lines",
+                line=dict(color="#4a5568", width=1.5, dash="dot"),
+                name=f"Trend ({m_c:+.2f}°C/°C)"
+            ))
+        fig7d.add_hline(y=0, line=dict(color="#718096", width=0.7))
+        fig7d.add_vline(x=0, line=dict(color="#718096", width=0.7))
+        fig7d.update_layout(
+            template="plotly_white", height=400,
+            margin=dict(t=10, b=50, l=60, r=20),
+            yaxis=dict(title="Temp anomaly (°C vs 1981–2010 clim)", gridcolor="#ebebeb", zeroline=False),
+            xaxis=dict(title="Nino 3.4 anomaly (°C)", gridcolor="#ebebeb"),
+            legend=dict(font=dict(size=10), bgcolor="rgba(255,255,255,0.9)",
+                        bordercolor="#e2e8f0", borderwidth=1),
+            paper_bgcolor="white", plot_bgcolor="white",
+            font=dict(family="Inter, sans-serif", color="#4a5568")
+        )
+        st.plotly_chart(fig7d, use_container_width=True)
 
 
