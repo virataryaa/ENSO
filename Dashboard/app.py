@@ -5,7 +5,8 @@ import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
 
-DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Database", "CPC NCEP NOA ANOM.txt")
+DATA_FILE  = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Database", "CPC NCEP NOA ANOM.txt")
+ERA5_WA_PQ = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Database", "era5_wa_monthly.parquet")
 
 EN_COL  = "#c0392b"
 LN_COL  = "#2471a3"
@@ -134,6 +135,31 @@ def classify_events(df, threshold=0.5, min_dur=5):
     return pd.DataFrame(events)
 
 
+@st.cache_data
+def load_era5_wa():
+    wa = pd.read_parquet(ERA5_WA_PQ)
+    wa.index = pd.to_datetime(wa.index)
+    wa = wa.sort_index()
+    # Monthly anomaly vs 1981-2010 climatology
+    clim = wa[(wa.index.year >= 1981) & (wa.index.year <= 2010)].groupby(wa.index.month).mean()
+    wa["precip_anom"] = wa["precip_mm"] - wa.index.map(lambda d: clim.loc[d.month, "precip_mm"])
+    wa["temp_anom"]   = wa["temp_c"]    - wa.index.map(lambda d: clim.loc[d.month, "temp_c"])
+    return wa
+
+
+def merge_enso_wa(enso_df, wa_df):
+    """Monthly ENSO anomaly merged with ERA5 WA data."""
+    enso_m = enso_df.set_index("DATE")[["ANOM"]].resample("MS").mean()
+    merged = enso_m.join(wa_df[["precip_mm", "temp_c", "precip_anom", "temp_anom"]], how="inner")
+    merged["month"]      = merged.index.month
+    merged["month_name"] = merged.index.strftime("%b")
+    merged["year"]       = merged.index.year
+    merged["phase"]      = merged["ANOM"].apply(
+        lambda a: "El Nino" if a >= 0.5 else ("La Nina" if a <= -0.5 else "Neutral")
+    )
+    return merged
+
+
 # ── load ─────────────────────────────────────────────────────────────────────
 df  = load()
 row = df.iloc[-1]
@@ -163,9 +189,10 @@ st.markdown(
 )
 
 # ── tabs ─────────────────────────────────────────────────────────────────────
-t1, t2, t3, t4, t5, t6 = st.tabs([
+t1, t2, t3, t4, t5, t6, t7 = st.tabs([
     "Full History", "Current Cycle", "Analogues",
-    "Heatmap", "Event Catalogue", "Seasonal Distribution"
+    "Heatmap", "Event Catalogue", "Seasonal Distribution",
+    "West Africa — ENSO Correlation"
 ])
 
 
@@ -515,3 +542,201 @@ with t6:
             "La Nina (n)": int(n_ln),
         })
     st.dataframe(pd.DataFrame(stats_rows), use_container_width=True, hide_index=True)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TAB 7  West Africa — ENSO Correlation
+# ════════════════════════════════════════════════════════════════════════════
+with t7:
+    if not os.path.exists(ERA5_WA_PQ):
+        st.warning("era5_wa_monthly.parquet not found. Run Database/ingest_era5_wa.py first.")
+        st.stop()
+
+    wa  = load_era5_wa()
+    mrg = merge_enso_wa(df, wa)
+
+    MONTH_ORDER = ["Jan","Feb","Mar","Apr","May","Jun",
+                   "Jul","Aug","Sep","Oct","Nov","Dec"]
+    PHASE_COLS  = {"El Nino": EN_COL, "Neutral": NU_COL, "La Nina": LN_COL}
+
+    st.markdown("**West Africa Cocoa Belt — ENSO Impact on Rainfall & Temperature**")
+    st.caption("ERA5 Reanalysis  |  Ivory Coast / Ghana region (4–10°N, 8°W–2°E)  |  1950–present  |  Climatology baseline: 1981–2010")
+
+    # ── KPI row
+    for phase_name, col in PHASE_COLS.items():
+        pass
+    ph_stats = mrg.groupby("phase")[["precip_mm", "temp_c"]].mean().round(1)
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("El Nino avg precip",  f"{ph_stats.loc['El Nino','precip_mm']:.0f} mm/mo"  if 'El Nino'  in ph_stats.index else "—")
+    k2.metric("La Nina avg precip",  f"{ph_stats.loc['La Nina','precip_mm']:.0f} mm/mo"  if 'La Nina'  in ph_stats.index else "—")
+    k3.metric("El Nino avg temp",    f"{ph_stats.loc['El Nino','temp_c']:.1f} °C"         if 'El Nino'  in ph_stats.index else "—")
+    k4.metric("La Nina avg temp",    f"{ph_stats.loc['La Nina','temp_c']:.1f} °C"         if 'La Nina'  in ph_stats.index else "—")
+
+    st.markdown("---")
+
+    # ── Section 1: Monthly precip by ENSO phase (composite bar)
+    st.markdown("**Rainfall by Month — ENSO Phase Composite**")
+    st.caption("Average monthly precipitation (mm) grouped by ENSO phase. Highlights which rainy seasons are most affected.")
+
+    fig7a = go.Figure()
+    for phase_name, col in PHASE_COLS.items():
+        sub = mrg[mrg["phase"] == phase_name].groupby("month")["precip_mm"].mean()
+        fig7a.add_trace(go.Bar(
+            x=MONTH_ORDER,
+            y=[sub.get(m+1, 0) for m in range(12)],
+            name=phase_name,
+            marker_color=col,
+            hovertemplate=f"<b>{phase_name}</b><br>%{{x}}: %{{y:.1f}} mm<extra></extra>"
+        ))
+    fig7a.update_layout(
+        template="plotly_white", height=380, barmode="group",
+        margin=dict(t=10, b=50, l=55, r=20),
+        yaxis=dict(title="Precip (mm/month)", gridcolor="#ebebeb", zeroline=False),
+        xaxis=dict(title="", gridcolor="#ebebeb"),
+        legend=dict(font=dict(size=11), orientation="h", y=1.05, x=0),
+        paper_bgcolor="white", plot_bgcolor="white",
+        font=dict(family="Inter, sans-serif", color="#4a5568")
+    )
+    st.plotly_chart(fig7a, use_container_width=True)
+
+    # ── Section 2: Lagged correlation — Nino 3.4 vs WA precip
+    st.markdown("---")
+    st.markdown("**Lagged Correlation — Nino 3.4 Anomaly vs West Africa Rainfall**")
+    st.caption("Correlation at each lag (months). Positive lag = ENSO leads rainfall. Peak tells you how many months ahead ENSO predicts conditions.")
+
+    max_lag = 12
+    lags    = range(-max_lag, max_lag + 1)
+    corr_p, corr_t = [], []
+    for lag in lags:
+        shifted = mrg["ANOM"].shift(lag)
+        corr_p.append(shifted.corr(mrg["precip_anom"]))
+        corr_t.append(shifted.corr(mrg["temp_anom"]))
+
+    fig7b = go.Figure()
+    fig7b.add_trace(go.Scatter(
+        x=list(lags), y=corr_p, mode="lines+markers",
+        line=dict(color=LN_COL, width=2),
+        marker=dict(size=5),
+        name="vs Precipitation anomaly",
+        hovertemplate="Lag %{x}m<br>r = %{y:.3f}<extra></extra>"
+    ))
+    fig7b.add_trace(go.Scatter(
+        x=list(lags), y=corr_t, mode="lines+markers",
+        line=dict(color=EN_COL, width=2, dash="dash"),
+        marker=dict(size=5),
+        name="vs Temperature anomaly",
+        hovertemplate="Lag %{x}m<br>r = %{y:.3f}<extra></extra>"
+    ))
+    fig7b.add_hline(y=0,     line=dict(color="#718096", width=0.8))
+    fig7b.add_hline(y=0.2,   line=dict(color="#718096", width=0.6, dash="dot"))
+    fig7b.add_hline(y=-0.2,  line=dict(color="#718096", width=0.6, dash="dot"))
+    fig7b.add_vline(x=0,     line=dict(color="#4a5568", width=0.8, dash="dash"))
+    fig7b.update_layout(
+        template="plotly_white", height=360,
+        margin=dict(t=10, b=50, l=55, r=20),
+        yaxis=dict(title="Pearson r", gridcolor="#ebebeb", zeroline=False, range=[-0.6, 0.6]),
+        xaxis=dict(title="Lag (months, positive = ENSO leads)", gridcolor="#ebebeb"),
+        legend=dict(font=dict(size=11), bgcolor="rgba(255,255,255,0.9)",
+                    bordercolor="#e2e8f0", borderwidth=1),
+        paper_bgcolor="white", plot_bgcolor="white",
+        font=dict(family="Inter, sans-serif", color="#4a5568")
+    )
+    st.plotly_chart(fig7b, use_container_width=True)
+
+    # ── Section 3: Scatter — Nino 3.4 vs WA precip anomaly by season
+    st.markdown("---")
+    st.markdown("**Scatter — Nino 3.4 vs Rainfall Anomaly by Month**")
+    st.caption("Each dot = one month. Coloured by ENSO phase. Slope shows direction of relationship.")
+
+    sel_month = st.selectbox(
+        "Filter by calendar month (or All)",
+        options=["All"] + MONTH_ORDER,
+        index=0
+    )
+    scatter_df = mrg.copy()
+    if sel_month != "All":
+        m_num = MONTH_ORDER.index(sel_month) + 1
+        scatter_df = scatter_df[scatter_df["month"] == m_num]
+
+    fig7c = go.Figure()
+    for phase_name, col in PHASE_COLS.items():
+        sub = scatter_df[scatter_df["phase"] == phase_name]
+        fig7c.add_trace(go.Scatter(
+            x=sub["ANOM"], y=sub["precip_anom"],
+            mode="markers",
+            name=phase_name,
+            marker=dict(color=col, size=5, opacity=0.65,
+                        line=dict(color="white", width=0.4)),
+            customdata=sub.index.strftime("%b %Y"),
+            hovertemplate="%{customdata}<br>Nino 3.4: %{x:+.2f} °C<br>Precip anom: %{y:+.1f} mm<extra></extra>"
+        ))
+    # Trendline
+    valid = scatter_df[["ANOM", "precip_anom"]].dropna()
+    if len(valid) > 10:
+        m_coef, b_coef = np.polyfit(valid["ANOM"], valid["precip_anom"], 1)
+        x_range = np.linspace(valid["ANOM"].min(), valid["ANOM"].max(), 100)
+        fig7c.add_trace(go.Scatter(
+            x=x_range, y=m_coef * x_range + b_coef,
+            mode="lines", line=dict(color="#4a5568", width=1.5, dash="dot"),
+            name=f"Trend  (slope={m_coef:.1f} mm/°C)", showlegend=True
+        ))
+    fig7c.add_hline(y=0, line=dict(color="#718096", width=0.7))
+    fig7c.add_vline(x=0, line=dict(color="#718096", width=0.7))
+    fig7c.update_layout(
+        template="plotly_white", height=400,
+        margin=dict(t=10, b=50, l=60, r=20),
+        yaxis=dict(title="Rainfall anomaly (mm vs 1981–2010 clim)", gridcolor="#ebebeb", zeroline=False),
+        xaxis=dict(title="Nino 3.4 anomaly (°C)", gridcolor="#ebebeb"),
+        legend=dict(font=dict(size=11), bgcolor="rgba(255,255,255,0.9)",
+                    bordercolor="#e2e8f0", borderwidth=1),
+        paper_bgcolor="white", plot_bgcolor="white",
+        font=dict(family="Inter, sans-serif", color="#4a5568")
+    )
+    st.plotly_chart(fig7c, use_container_width=True)
+
+    # ── Section 4: Dual time series overlay
+    st.markdown("---")
+    st.markdown("**Time Series Overlay — Nino 3.4 vs West Africa Rainfall Anomaly**")
+    st.caption("12-month rolling mean shown for clarity. Inverted relationship visible during strong ENSO events.")
+
+    roll = mrg[["ANOM", "precip_anom"]].rolling(12, center=True).mean().dropna()
+
+    fig7d = go.Figure()
+    fig7d.add_trace(go.Scatter(
+        x=roll.index, y=roll["ANOM"],
+        mode="lines", name="Nino 3.4 (12m roll)",
+        line=dict(color="#2c3e50", width=1.5),
+        hovertemplate="%{x|%b %Y}<br>Nino 3.4: %{y:+.2f} °C<extra></extra>"
+    ))
+    fig7d.add_trace(go.Scatter(
+        x=roll.index, y=roll["precip_anom"] / 30,   # scale to same axis
+        mode="lines", name="WA Precip anom (÷30, 12m roll)",
+        line=dict(color=LN_COL, width=1.5, dash="dash"),
+        hovertemplate="%{x|%b %Y}<br>Precip anom (scaled): %{y:+.2f}<extra></extra>"
+    ))
+    fig7d.add_hline(y=0, line=dict(color="#718096", width=0.7))
+    fig7d.update_layout(
+        template="plotly_white", height=360,
+        margin=dict(t=10, b=50, l=55, r=20),
+        yaxis=dict(title="Nino 3.4 °C  /  Precip anom ÷30", gridcolor="#ebebeb", zeroline=False),
+        xaxis=dict(title="", gridcolor="#ebebeb"),
+        legend=dict(font=dict(size=11), bgcolor="rgba(255,255,255,0.9)",
+                    bordercolor="#e2e8f0", borderwidth=1),
+        hovermode="x unified",
+        paper_bgcolor="white", plot_bgcolor="white",
+        font=dict(family="Inter, sans-serif", color="#4a5568")
+    )
+    st.plotly_chart(fig7d, use_container_width=True)
+
+    # ── Section 5: Phase summary table
+    st.markdown("---")
+    st.markdown("**ENSO Phase Summary — West Africa Climate Statistics**")
+    summary = mrg.groupby(["phase", "month_name"]).agg(
+        avg_precip=("precip_mm", "mean"),
+        avg_precip_anom=("precip_anom", "mean"),
+        avg_temp=("temp_c", "mean"),
+        avg_temp_anom=("temp_anom", "mean"),
+        n=("ANOM", "count")
+    ).round(2).reset_index()
+    summary.columns = ["Phase", "Month", "Avg Precip (mm)", "Precip Anom (mm)", "Avg Temp (°C)", "Temp Anom (°C)", "N years"]
+    st.dataframe(summary, use_container_width=True, hide_index=True)
