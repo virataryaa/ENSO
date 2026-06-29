@@ -475,10 +475,31 @@ with t6:
     wa  = load_era5_wa()
     mrg = merge_enso_wa(df, wa)
 
+    # ── Assign phases using official ONI definition (5+ consecutive seasons)
+    oni_events    = classify_events(df, threshold=0.5, min_dur=5)
+    label_to_date = dict(zip(df["LABEL"], df["DATE"]))
+    mrg["phase"]  = "Neutral"
+    for _, ev in oni_events.iterrows():
+        s = label_to_date.get(ev["Start"])
+        e = label_to_date.get(ev["End"])
+        if s is not None and e is not None:
+            mrg.loc[(mrg.index >= s) & (mrg.index <= e), "phase"] = ev["Type"]
+
+    # Event period labels for charts
+    def fmt_event(row):
+        s_yr = int(row["Start"][-4:])
+        e_yr = int(row["End"][-4:])
+        return f"{s_yr}/{str(e_yr)[-2:]}" if e_yr != s_yr else str(s_yr)
+
+    en_evs = oni_events[oni_events["Type"] == "El Nino"].copy()
+    ln_evs = oni_events[oni_events["Type"] == "La Nina"].copy()
+    en_str = "  ".join(fmt_event(r) for _, r in en_evs.iterrows())
+    ln_str = "  ".join(fmt_event(r) for _, r in ln_evs.iterrows())
+
     PHASE_COLS = {"El Nino": EN_COL, "Neutral": NU_COL, "La Nina": LN_COL}
 
     st.markdown("**West Africa Cocoa Belt — ENSO Impact on Rainfall & Temperature**")
-    st.caption("ERA5 Reanalysis  |  Ivory Coast / Ghana region (4–10°N, 8°W–2°E)  |  1950–present  |  Climatology baseline: 1981–2010")
+    st.caption("ERA5 Reanalysis  |  Ivory Coast / Ghana region (4–10°N, 8°W–2°E)  |  1950–present  |  Climatology baseline: 1981–2010  |  Phases: official ONI (5+ consecutive seasons ≥ ±0.5°C)")
 
     # ── Section 1: Monthly precip by ENSO phase (composite bar)
     st.markdown("**Rainfall by Month — ENSO Phase Composite**")
@@ -503,12 +524,6 @@ with t6:
         paper_bgcolor="white", plot_bgcolor="white",
         font=dict(family="Inter, sans-serif", color="#4a5568")
     )
-    # Year labels for each phase
-    en_years = sorted(mrg[mrg["phase"] == "El Nino"]["year"].unique())
-    ln_years = sorted(mrg[mrg["phase"] == "La Nina"]["year"].unique())
-    en_str   = "  ".join(str(y) for y in en_years)
-    ln_str   = "  ".join(str(y) for y in ln_years)
-
     st.plotly_chart(fig7a, use_container_width=True)
     st.markdown(
         f'<div style="font-size:10px;line-height:1.7;margin-top:-8px">'
