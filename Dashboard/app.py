@@ -138,23 +138,28 @@ def classify_events(df, threshold=0.5, min_dur=5):
 @st.cache_data
 def load_era5_wa():
     wa = pd.read_parquet(ERA5_WA_PQ)
-    wa.index = pd.to_datetime(wa.index)
+    wa.index = pd.to_datetime(wa.index).tz_localize(None)   # strip tz if present
     wa = wa.sort_index()
-    # Monthly anomaly vs 1981-2010 climatology
     base = wa[(wa.index.year >= 1981) & (wa.index.year <= 2010)].copy()
     clim = base.groupby(base.index.month).mean()
     wa["precip_anom"] = wa["precip_mm"] - wa.index.map(lambda d: clim.loc[d.month, "precip_mm"])
     wa["temp_anom"]   = wa["temp_c"]    - wa.index.map(lambda d: clim.loc[d.month, "temp_c"])
+    wa["year"]        = wa.index.year
+    wa["month"]       = wa.index.month
     return wa
 
 
 def merge_enso_wa(enso_df, wa_df):
-    """Monthly ENSO anomaly merged with ERA5 WA data."""
-    enso_m = enso_df.set_index("DATE")[["ANOM"]].resample("MS").mean()
-    merged = enso_m.join(wa_df[["precip_mm", "temp_c", "precip_anom", "temp_anom"]], how="inner")
-    merged["month"]      = merged.index.month
-    merged["month_name"] = merged.index.strftime("%b")
-    merged["year"]       = merged.index.year
+    """Merge ENSO + ERA5 WA on year/month — avoids tz mismatch issues."""
+    enso_m = enso_df[["DATE", "ANOM"]].copy()
+    enso_m["year"]  = enso_m["DATE"].dt.year
+    enso_m["month"] = enso_m["DATE"].dt.month
+
+    wa_copy = wa_df[["precip_mm", "temp_c", "precip_anom", "temp_anom", "year", "month"]].copy()
+
+    merged = enso_m.merge(wa_copy, on=["year", "month"], how="inner")
+    merged = merged.set_index("DATE").sort_index()
+    merged["month_name"] = merged["month"].apply(lambda m: MONTH_ORDER[m - 1])
     merged["phase"]      = merged["ANOM"].apply(
         lambda a: "El Nino" if a >= 0.5 else ("La Nina" if a <= -0.5 else "Neutral")
     )
